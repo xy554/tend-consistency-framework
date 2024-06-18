@@ -119,38 +119,12 @@ CREATE TABLE `tend_consistency_task`
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 ```
 
-## 4、安装tend-consistency-core到本地maven仓库
 
-在idea中，右键tend-consistency-core > open in terminal > 输入：mvn clean install
-
-- 右键tend-consistency-core：
-
-![Image text](img/1.png)
-
-- 选择open in terminal：
-
-![Image text](img/2.png)
-
-- 执行命令：mvn clean install
-
-![Image text](img/3.png)
-
-## 5、在您的springboot工程中添加依赖
-
-```xml
-
-<dependency>
-    <groupId>com.xy</groupId>
-    <artifactId>xy-tend-consistency-core</artifactId>
-    <version>1.0.0</version>
-</dependency>
-```
-
-## 6、在工程中的配置文件添加配置（optional 可选）
+## 4、在工程中的配置文件添加配置（optional 可选）
 
 > 做了配置项提示功能，在配置application.yml或application.properties文件中可以通过输入 tend 得到相关提示
 
-### 6.1、任务表为单库的配置
+### 4.1、任务表为单库的配置
 
 ```yaml
   tend:
@@ -175,7 +149,7 @@ CREATE TABLE `tend_consistency_task`
         task-shared: false
 ```
 
-### 6.2、任务表为多库的配置
+### 4.2、任务表为多库的配置
 
 ```yaml
 tend:
@@ -235,7 +209,7 @@ spring:
 
 > 上面给出的是相关的配置项，同时如果不配置，框架会按照上面给出的默认值进行自动配置，业务服务根据自身情况定制即可。
 
-### 6.3、如果您选择了任务表为多库模式的配置请在pom配置文件中加入相关依赖
+### 4.3、如果您选择了任务表为多库模式的配置请在pom配置文件中加入相关依赖
 
 ```xml
 <!-- 分库模式记的打开 -->
@@ -246,7 +220,7 @@ spring:
 </dependency>
 ```
 
-### 6.4、在application.yml配置文件中自定义任务调度查询参数
+### 4.4、在application.yml配置文件中自定义任务调度查询参数
 
 **实现步骤**
 
@@ -279,7 +253,7 @@ spring:
 > - 实现的具体示例： 参考示例工程tend-consistency-springboot-demo下的com..eshop.range.MyTaskTimeRangeQuery类
 >
 
-### 6.5、在application.yml配置文件中自定义任务分片键的生成策略
+### 4.5、在application.yml配置文件中自定义任务分片键的生成策略
 
 **实现步骤：**
 
@@ -300,7 +274,7 @@ long generateShardKey();
 > - 实现的具体示例： 参考示例工程tend-consistency-springboot-demo下的MySnowflakeShardingKeyGenerator类
 >
 
-### 6.6、在@ConsistencyTask注解中声明自定义告警通知类的bean
+### 4.6、在@ConsistencyTask注解中声明自定义告警通知类的bean
 
 - 1、在准备执行的方法中，标注@ConsistencyTask注解
 -
@@ -327,7 +301,7 @@ public void sendRightNowAsyncMessage(OrderInfoDTO orderInfo) {
 
 > 具体示例见com..eshop.alertm.NormalAlerter类
 
-### 6.7、在@ConsistencyTask注解中声明降级类
+### 4.7、在@ConsistencyTask注解中声明降级类
 
 - 1、在准备执行的方法中，标注@ConsistencyTask注解
 - 2、定义降级类，降级类中的方法，与被注解的方法的入参、方法名、返回值要一模一样
@@ -349,13 +323,13 @@ public void sendRightNowAsyncMessage(OrderInfoDTO orderInfo) {
 }
 ```
 
-## 7、在启动类中加入EnableTendConsistencyTask注解
+## 5、在启动类中加入EnableTendConsistencyTask注解
 
 ```
 @EnableTendConsistencyTask
 ```
 
-## 8、在需要的方法上加入@ConsistencyTask注解
+## 6、在需要的方法上加入@ConsistencyTask注解
 
 eg:
 
@@ -374,7 +348,7 @@ public void sendyMessage(CreateOrderRequest createOrderRequest) {
 
 > 注意：因为框架是基于AOP的，因此注解只能加到public的方法上，建议所有发消息的组件放到一个类中，或者做一个发消息的接口，统一管理发消息的方法
 
-### 8.1、注解参数说明：
+### 6.1、注解参数说明：
 
 ##### 注解属性说明：
 
@@ -411,21 +385,17 @@ EXECUTE_SCHEDULE(2, "调度执行");
 
 ​
 
-## 9、任务调度
+## 7、任务调度
 
 注：业务服务需要在一个定时任务中调用框架的taskScheduleManager.performanceTask()方法。框架会将到时间需要执行及执行失败的任务查询出来后进行执行。
 示例在tend-consistency-springboot-demo工程下的com..eshop.schedule.Scheduler类中进行了实现。
 
-### 9.1、使用spring定时任务调度
+### 7.1、使用spring定时任务调度
 
 使用spring的定时任务来执行performanceTask()方法时候，需要保证多个业务服务的实例，同一时间只有一个实例可以执行runTask()方法。
 所以要加分布式锁来实现。
 
-### 9.2、使用xxl-job或elastic-job调度
+### 7.2、使用xxl-job或elastic-job调度
 
 分布式任务调度框架，可以设置任务同一时间只有一个实例可以执行成功，比如选择执行的策略是第一个或者最后一个即可实现该功能。 ​
 
-## 10、示例工程及框架源码
-
-tend-consistency-springboot-demo 模块。
-![Image text](img/4.png)
