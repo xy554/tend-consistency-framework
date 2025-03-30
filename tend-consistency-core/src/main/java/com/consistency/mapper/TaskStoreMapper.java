@@ -21,7 +21,7 @@ public interface TaskStoreMapper {
      * @param consistencyTaskInstance 要存储的最终一致性任务的实例信息
      * @return 存储结果
      */
-    @Insert("INSERT INTO tend_consistency_task("
+    @Insert("INSERT INTO ruyuan_tend_consistency_task("
                 + "task_id,"
                 + "task_status,"
                 + "execute_times,"
@@ -80,7 +80,7 @@ public interface TaskStoreMapper {
             "thread_way, error_msg, alert_expression, " +
             "alert_action_bean_name, fallback_class_name, fallback_error_msg,shard_key," +
             "gmt_create, gmt_modified " +
-            "FROM tend_consistency_task " +
+            "FROM ruyuan_tend_consistency_task " +
             "where " +
             "id = #{id} AND shard_key = #{shardKey}")
     @Results({
@@ -123,11 +123,11 @@ public interface TaskStoreMapper {
             "thread_way, error_msg, alert_expression, " +
             "alert_action_bean_name, fallback_class_name, fallback_error_msg,shard_key," +
             "gmt_create, gmt_modified " +
-            "FROM tend_consistency_task " +
+            "FROM ruyuan_tend_consistency_task " +
             "WHERE " +
             "task_status <= 2 " +
             "AND execute_time>=#{startTime} AND execute_time<=#{endTime} " +
-            "order by execute_time desc " + // 每个任务都是有一个自己的execute_time，如果你是schedule模式，execute time = now + delay time，你的任务最早的运行时间
+            "order by execute_time desc " +
             "LIMIT #{limitTaskCount}")
     @Results({
             @Result(column = "id", property = "id", id = true),
@@ -156,17 +156,18 @@ public interface TaskStoreMapper {
 
     /**
      * 启动任务
-     *
+     *  本次优化去掉了 and task_status!=1 的查询条件 之前是为了防止，多线程情况下，任务被抢占重复执行。
+     *  本次优化加入了任务分片执行，同一时间，可以保证，只有一个实例，在运行该一致性任务。
      * @param consistencyTaskInstance 任务实例信息
      * @return 启动任务的结果
      */
     @Update("UPDATE "
-            + "tend_consistency_task "
+            + "ruyuan_tend_consistency_task "
             + "SET "
             + "task_status=#{taskStatus},"
             + "execute_times=execute_times+1,"
             + "execute_time=#{executeTime} "
-            + "WHERE id=#{id} and task_status!=1 and shard_key=#{shardKey}"
+            + "WHERE id=#{id} and shard_key=#{shardKey}"
     )
     int turnOnTask(ConsistencyTaskInstance consistencyTaskInstance);
 
@@ -176,7 +177,7 @@ public interface TaskStoreMapper {
      * @param taskInstance 一致性任务实例信息
      * @return 标记结果
      */
-    @Delete("DELETE FROM tend_consistency_task WHERE id=#{id} and shard_key=#{shardKey}")
+    @Delete("DELETE FROM ruyuan_tend_consistency_task WHERE id=#{id} and shard_key=#{shardKey}")
     int markSuccess(ConsistencyTaskInstance taskInstance);
 
     /**
@@ -185,7 +186,7 @@ public interface TaskStoreMapper {
      * @param taskInstance 一致性任务实例信息
      * @return 标记结果
      */
-    @Update("UPDATE tend_consistency_task SET task_status=2, error_msg=#{errorMsg}, execute_time=#{executeTime} WHERE id=#{id} and shard_key=#{shardKey}")
+    @Update("UPDATE ruyuan_tend_consistency_task SET task_status=2, error_msg=#{errorMsg}, execute_time=#{executeTime} WHERE id=#{id} and shard_key=#{shardKey}")
     int markFail(ConsistencyTaskInstance taskInstance);
 
     /**
@@ -194,7 +195,7 @@ public interface TaskStoreMapper {
      * @param taskInstance 一致性任务实例
      * @return 标记结果
      */
-    @Update("UPDATE tend_consistency_task SET fallback_error_msg=#{fallbackErrorMsg} WHERE id=#{id} and shard_key=#{shardKey}")
+    @Update("UPDATE ruyuan_tend_consistency_task SET fallback_error_msg=#{fallbackErrorMsg} WHERE id=#{id} and shard_key=#{shardKey}")
     int markFallbackFail(ConsistencyTaskInstance taskInstance);
 
 }

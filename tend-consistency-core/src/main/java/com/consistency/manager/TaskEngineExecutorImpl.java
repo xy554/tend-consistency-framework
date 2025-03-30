@@ -1,29 +1,33 @@
 package com.consistency.manager;
 
+import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.ReflectUtil;
 import cn.hutool.json.JSONUtil;
-import com.consistency.model.ConsistencyTaskInstance;
-import com.consistency.utils.ExpressionUtils;
-import com.consistency.utils.ReflectTools;
-import com.consistency.utils.SpringUtil;
 import com.consistency.config.TendConsistencyConfiguration;
 import com.consistency.custom.alerter.ConsistencyFrameworkAlerter;
+import com.consistency.enums.ConsistencyTaskStatusEnum;
 import com.consistency.exceptions.ConsistencyException;
+import com.consistency.localstorage.RocksLocalStorage;
+import com.consistency.model.ConsistencyTaskInstance;
 import com.consistency.service.TaskStoreService;
-import com.consistency.utils.TimeUtils;
+import com.consistency.utils.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 
+import javax.annotation.Resource;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.text.SimpleDateFormat;
 import java.util.Map;
 import java.util.concurrent.ThreadPoolExecutor;
+
+import static com.consistency.utils.ExpressionUtils.readExpr;
+import static com.consistency.utils.ExpressionUtils.rewriteExpr;
 
 /**
  * 任务执行引擎实现类
@@ -33,6 +37,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Slf4j
 @Component
 public class TaskEngineExecutorImpl implements TaskEngineExecutor {
+
+    private static final String MY_SQL_NOT_OPEN_ERROR = "Could not open JDBC Connection for transaction";
 
     /**
      * 一致性任务存储的service接口
@@ -54,6 +60,16 @@ public class TaskEngineExecutorImpl implements TaskEngineExecutor {
      */
     @Autowired
     private TendConsistencyConfiguration consistencyConfig;
+    /**
+     * 事务模板
+     */
+    @Resource
+    private TransactionTemplate transactionTemplate;
+    /**
+     * RocksDB工具类
+     */
+    @Autowired
+    private RocksLocalStorage rocksLocalStorage;
 
     /**
      * 执行指定的任务实例  这里使用try catch 是因为需要将任务的错误信息也保存到任务表 正常情况下 不能进行try catch，不然事务是无法回滚的
@@ -61,50 +77,67 @@ public class TaskEngineExecutorImpl implements TaskEngineExecutor {
      * @param taskInstance 任务实例信息
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    // @Transactional(rollbackFor = Exception.class)
+    // 注意：在模拟本地存储时，发现，如下问题：
+    // 一开始，数据库开启的情况下，启动应用后，此时关闭数据库，任务初始化的时候，可以存储到RocksDB中，
+    // 但是在调度器调度执行任务的时候，因为加了@Transactional注解，spring会基于@Transactional注解的拦截器中，
+    // 新建事务，这里不能加事务注解 需要使用手工开启注解的方式，来执行任务。
     public void executeTaskInstance(ConsistencyTaskInstance taskInstance) {
         try {
-            // 启动任务
-            int result = taskStoreService.turnOnTask(taskInstance);
-            if (result <= 0) {
-                log.warn("[一致性任务框架] 任务已经为启动状态，退出执行流程 task:{}", JSONUtil.toJsonStr(taskInstance));
-                return;
+            transactionTemplate.execute(transactionStatus -> {
+                doExecuteTaskInstance(taskInstance);
+                return true;
+            });
+        } catch (Exception e) {
+            doExecuteTaskInstance(taskInstance);
+        }
+    }
+
+    private void doExecuteTaskInstance(ConsistencyTaskInstance taskInstance) {
+
+        boolean isOpenLocalStorageMode = false;
+        try {
+            // 如果id是空的，说明：任务在初始化的时候，就出现了MySQL故障。任务实例会落到本地RocksDB的KV存储中。
+            if (ObjectUtil.isEmpty(taskInstance.getId())) {
+                isOpenLocalStorageMode = true;
             }
 
-            // 获取启动好的一致性任务实例
-            // 重新查询一次，数据是最新的，比如刚才SQL里更新了execute times
-            // Task任务实例对象里，并没有设置这个execute times = 0
-            // 但是在这里你重新查询了一次，让数据库里的数据刷新到内存对象里来，execute times = 1，就出来了
-            taskInstance = taskStoreService.getTaskByIdAndShardKey(taskInstance.getId(), taskInstance.getShardKey());
-
+            // 如果没有开启本地存储模式
+            if (!isOpenLocalStorageMode) {
+                // 启动任务 MySQL故障点1：如果这里数据库挂了，此时任务状态是 [初始化] 或者 [执行失败] 的状态，需要持久化到本地存储.
+                taskStoreService.turnOnTask(taskInstance);
+            }
+            taskInstance.setTaskStatus(ConsistencyTaskStatusEnum.START.getCode());
             // 执行任务
             taskScheduleManager.performanceTask(taskInstance);
-
-            // 标记为执行成功,这里会移除该任务
-            int successResult = taskStoreService.markSuccess(taskInstance);
-
-            // 针对mark success数据库操作去执行一个try cache，对于任务执行成功，但是mark success失败
-            // 完全基于磁盘文件可以去打一个执行成功的标记
-            // 框架里自带，带一个后台线程，不断读取磁盘文件里的执行成功的标记，自动给他去在数据库里mark success去补充执行
-            // delete操作，把他删除就可以了
-
-            // 可以让框架基于redis开启一个可选的幂等保障的选项，可以给一个参数，配置一个redis地址，开启一个幂等性的机制
-            // 在redis里可以写入一个指定任务id已经运行成功的幂等标记
-            // 对于定时调度运行的程序，对每个数据库里查询出来的任务id，都去redis里检查一下，自动做一个幂等的检查
-            // 确保已经成功的任务不要再重复运行了
-
-            log.info("[一致性任务框架] 标记为执行成功的结果为 [{}]", successResult > 0);
+            // 如果执行成功，到了这里，就标记为执行成功，以防止，下面markSuccess的时候，出现数据库故障。
+            // 这样在进入catch块的时候，还可以做下区分
+            taskInstance.setTaskStatus(ConsistencyTaskStatusEnum.SUCCESS.getCode());
+            if (!isOpenLocalStorageMode) {
+                // MySQL故障点3：此时任务已经被标记为执行成功,这里会移除该任务。 如果说这里移除任务的时候，发现MySQL挂了，
+                // 等数据库恢复后，会发生任务被重复执行，由业务服务的幂等保障机制来处理。
+                int successResult = taskStoreService.markSuccess(taskInstance);
+                log.info("[一致性任务框架] 标记为执行成功的结果为 [{}]", successResult > 0);
+            } else {
+                // 从RocksDB中移除
+                rocksRemove(taskInstance);
+                log.info("rocksRemoveFallback删除key成功");
+            }
         } catch (Exception e) {
-            log.error("[一致性任务框架] {} 执行一致性任务时，发生异常, taskInstance的实例信息为 {}", JSONUtil.toJsonStr(taskInstance), e);
+            log.error("[一致性任务框架] 执行一致性任务时发生异常, taskInstance的实例信息为 {}", JSONUtil.toJsonStr(taskInstance), e);
+            // 不是数据库无法连接的异常
+            if (!e.getMessage().contains(MY_SQL_NOT_OPEN_ERROR)) {
+                taskInstance.setExecuteTime(getNextExecuteTime(taskInstance));
+            }
             taskInstance.setErrorMsg(getErrorMsg(e));
-            // 对于最终一致性的框架来说，他执行action，如果失败了，是要无限次重试
-            // 如果说出现了一个失败，下一次必然会是要进行重试的，下一次是什么时候可以进行重试呢？
-            // 在这里就需要给他去计算一个下一次进行重试的execute time
-            taskInstance.setExecuteTime(getNextExecuteTime(taskInstance)); // 这个下一次执行时间，非常关键的一个运算
-            int failResult = taskStoreService.markFail(taskInstance);
-            log.info("[一致性任务框架] 标记为执行失败的结果为 [{}] 下次调度时间为 [{} - {}]", failResult > 0, taskInstance.getExecuteTime(), getFormatTime(taskInstance.getExecuteTime()));
+            taskInstance.setTaskStatus(ConsistencyTaskStatusEnum.FAIL.getCode());
+            try {
+                taskStoreService.markFail(taskInstance);
+            } catch (Exception ex) {
+                log.error("[一致性任务框架] 标记任务执行失败时，发生异常", e);
+            }
             // 执行降级逻辑
-            fallbackExecuteTask(taskInstance);
+            fallbackExecuteTask(taskInstance, isOpenLocalStorageMode, e);
         }
     }
 
@@ -112,27 +145,33 @@ public class TaskEngineExecutorImpl implements TaskEngineExecutor {
      * 当执行任务失败的时候，执行该逻辑
      *
      * @param taskInstance 任务实例
+     * @param isOpenLocalStorageMode 任务实例是否是本地存储模式
      */
     @Override
-    public void fallbackExecuteTask(ConsistencyTaskInstance taskInstance) {
+    public void fallbackExecuteTask(ConsistencyTaskInstance taskInstance, boolean isOpenLocalStorageMode, Exception ex) {
+        log.info("[一致性任务框架] 执行任务降级逻辑...");
+        // 如果是数据库连不上的异常，那么就将数据存储到本地。
+        // 这里用字符串匹配的方式，是因为框架本身，没有mysql驱动，因为本事也是要嵌入到业务服务中运行的，所以使用字符串匹配的方式
+        if (ex.getMessage().contains(MY_SQL_NOT_OPEN_ERROR)) {
+            // 将任务实例存储到RocksDB,有一致性框架内部的调度引擎，去再次执行该任务。
+            rocksStore(taskInstance);
+        }
         // 如果注解(任务实例信息)中没有提供降级类，则退出，不执行降级
-        if (StringUtils.isEmpty(taskInstance.getFallbackClassName())) {
+        if (StringUtils.isEmpty(taskInstance.getFallbackClassName()) ||
+                "void".equals(taskInstance.getFallbackClassName()) ) {
             // 解析并对表达式结果进行校验，并执行相关的告警通知逻辑
             // 如果没配置降级类且符合告警通知的表达式，则直接进行告警
             parseExpressionAndDoAlert(taskInstance);
             return;
         }
         // 获取全局配置 默认是开启降级策略的 如果失败会进行降级
-        // fail count threshold，失败重试到多少次了，此时才会去执行你的降级逻辑
         if (taskInstance.getExecuteTimes() <= consistencyConfig.getFailCountThreshold()) {
             return;
         }
-        log.info("[一致性任务框架] 执行任务id为{}的降级逻辑...", taskInstance.getId());
         Class<?> fallbackClass = ReflectTools.getClassByName(taskInstance.getFallbackClassName());
         if (ObjectUtils.isEmpty(fallbackClass)) {
             return;
         }
-
         // 获取参数值列表的json数组字符串
         String taskParameterText = taskInstance.getTaskParameter();
         // 参数类型字符串 多个用逗号进行了分隔
@@ -148,22 +187,58 @@ public class TaskEngineExecutorImpl implements TaskEngineExecutor {
         try {
             // 执行降级逻辑的方法
             fallbackMethod.invoke(fallbackClassBean, paramValues);
-            // 标记为执行成功 这里会移除该任务
-            int successResult = taskStoreService.markSuccess(taskInstance);
-
-            // 可以实现一套跟我们之前讲的执行成功后的mark success故障的降级机制，一模一样机制
-            // 写磁盘，要对这个任务进行mark success，后台线程不停的删除任务
-            // 开启redis，只要降级成功了，mark success失败了，也必须要去redis里写标记
-
-            log.info("[一致性任务框架] 降级逻辑执行成功 标记为执行成功的结果为 [{}]", successResult > 0);
+            if (!isOpenLocalStorageMode) {
+                // 标记为执行成功 这里会移除该任务
+                int successResult = taskStoreService.markSuccess(taskInstance);
+                log.info("[一致性任务框架] 降级逻辑执行成功 标记为执行成功的结果为 [{}]", successResult > 0);
+            } else {
+                rocksRemove(taskInstance);
+            }
         } catch (Exception e) {
             // 解析并对表达式结果进行校验，并执行相关的告警通知逻辑
             // 在执行完降级逻辑后，再去发送消息。因为如果降级成功了，也就不用发送告警通知了。如果降级失败，再去发送告警通知。
             parseExpressionAndDoAlert(taskInstance);
             taskInstance.setFallbackErrorMsg(getErrorMsg(e));
-            int failResult = taskStoreService.markFallbackFail(taskInstance);
-            log.error("[一致性任务框架] 降级逻辑也失败了 标记为执行失败的结果为 [{}] 下次调度时间为 [{} - {}]", failResult > 0,
-                    taskInstance.getExecuteTime(), getFormatTime(taskInstance.getExecuteTime()), e);
+            if (!isOpenLocalStorageMode) {
+                int failResult = taskStoreService.markFallbackFail(taskInstance);
+                log.error("[一致性任务框架] 降级逻辑也失败了 标记为执行失败的结果为 [{}] 下次调度时间为 [{} - {}]", failResult > 0,
+                        taskInstance.getExecuteTime(), getFormatTime(taskInstance.getExecuteTime()), e);
+            } else {
+                rocksStore(taskInstance);
+                log.error("[一致性任务框架] 降级逻辑也失败了, 在RockDB进行了记录，标记为执行失败，下次调度时间为 [{} - {}]",
+                        taskInstance.getExecuteTime(), getFormatTime(taskInstance.getExecuteTime()), e);
+            }
+        }
+    }
+
+    /**
+     * 从RocksDB中获取实例任务
+     * @param taskInstance 实例任务
+     */
+    private String getTaskInstanceFromRocks(ConsistencyTaskInstance taskInstance) {
+        // 记录到RocksDB
+        return rocksLocalStorage.get(taskInstance);
+    }
+
+    /**
+     * 存储降级，将任务存储到RocksDB中
+     * @param taskInstance 任务实例信息
+     */
+    private void rocksStore(ConsistencyTaskInstance taskInstance) {
+        if (StringUtils.isEmpty(getTaskInstanceFromRocks(taskInstance))) {
+            // 记录到RocksDB
+            rocksLocalStorage.put(taskInstance);
+        }
+    }
+
+    /**
+     * 从RocksDB中删除一个实例
+     * @param taskInstance 任务实例信息
+     */
+    private void rocksRemove(ConsistencyTaskInstance taskInstance) {
+        if (!StringUtils.isEmpty(getTaskInstanceFromRocks(taskInstance))) {
+            // 记录到RocksDB
+            rocksLocalStorage.delete(taskInstance);
         }
     }
 
@@ -203,9 +278,9 @@ public class TaskEngineExecutorImpl implements TaskEngineExecutor {
             // 操作会有一定的耗时（不过这个也要看具体的实现类是怎么实现的，如果实现类中使用的是异步推送告警，其实这里也就不用放到线程池中了）
             alertNoticePool.submit(() -> {
                 // 对表达式进行重写
-                String expr = ExpressionUtils.rewriteExpr(taskInstance.getAlertExpression());
+                String expr = rewriteExpr(taskInstance.getAlertExpression());
                 // 获取表达式解析后的结果
-                String exprResult = ExpressionUtils.readExpr(expr, ExpressionUtils.buildDataMap(taskInstance));
+                String exprResult = readExpr(expr, ExpressionUtils.buildDataMap(taskInstance));
                 // 执行alert告警
                 doAlert(exprResult, taskInstance);
             });
@@ -286,8 +361,6 @@ public class TaskEngineExecutorImpl implements TaskEngineExecutor {
      */
     private long getNextExecuteTime(ConsistencyTaskInstance taskInstance) {
         // 上次执行时间 + （下一次执行的次数 * 执行间隔）
-        // 对于一个任务重试执行的时间间隔，是有一个参数配置
-        // 第一次执行失败之后，会用第一次执行之前的时间 + （1 + 1） * 20s = 第一次执行时间往后推40s
         return taskInstance.getExecuteTime() + ((taskInstance.getExecuteTimes() + 1) * TimeUtils.secToMill(taskInstance.getExecuteIntervalSec()));
     }
 

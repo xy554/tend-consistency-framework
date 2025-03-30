@@ -13,5 +13,5 @@ import java.lang.annotation.*;
 @Documented
 @Target(ElementType.TYPE)
 @Import({ConsistencyTaskSelector.class})
-public @interface EnableTendConsistencyTask { // 对于这个注解来说，唯一的作用就是触发其他的class运行
+public @interface EnableTendConsistencyTask {
 }

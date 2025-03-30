@@ -1,6 +1,7 @@
 package com.consistency.config;
 
 import com.consistency.model.ConsistencyTaskInstance;
+import com.consistency.remote.message.RegisterOrCancelResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
@@ -20,6 +21,10 @@ public class ThreadPoolConfig {
      * 一致性任务线程名称前缀
      */
     private static final String CONSISTENCY_TASK_THREAD_POOL_PREFIX = "CTThreadPool_";
+    /**
+     * 用于节点新增和取消的线程池名称前缀
+     */
+    private static final String PEER_REGISTER_THREAD_POOL_PREFIX = "PeerAddOrCancelPool_";
 
     /**
      * 告警线程名称的前缀
@@ -48,6 +53,21 @@ public class ThreadPoolConfig {
                 TimeUnit.valueOf(tendConsistencyConfiguration.getThreadPoolKeepAliveTimeUnit()),
                 asyncConsistencyTaskThreadPoolQueue,
                 createThreadFactory(CONSISTENCY_TASK_THREAD_POOL_PREFIX)
+        );
+        return new ExecutorCompletionService<>(asyncReleaseResourceExecutorPool);
+    }
+
+    @Bean
+    public CompletionService<RegisterOrCancelResponse> peerRegisterPool() {
+        LinkedBlockingQueue<Runnable> asyncConsistencyTaskThreadPoolQueue =
+                new LinkedBlockingQueue<>(50);
+        ThreadPoolExecutor asyncReleaseResourceExecutorPool = new ThreadPoolExecutor(
+                5,
+                5,
+                60,
+                TimeUnit.SECONDS,
+                asyncConsistencyTaskThreadPoolQueue,
+                createThreadFactory(PEER_REGISTER_THREAD_POOL_PREFIX)
         );
         return new ExecutorCompletionService<>(asyncReleaseResourceExecutorPool);
     }

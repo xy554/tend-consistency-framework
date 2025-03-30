@@ -1,15 +1,15 @@
 package com.consistency.custom.query;
 
-import com.consistency.utils.DateUtils;
-
 import java.util.Calendar;
 import java.util.Date;
+
+import static com.consistency.utils.DateUtils.getDateByDayNum;
 
 /**
  * 任务执行时间范围查询器接口
  * 如业务服务需要定制，实现该接口即可
  *
- * @author xy
+ * @author xiayang
  **/
 public interface TaskTimeRangeQuery {
 
@@ -39,8 +39,8 @@ public interface TaskTimeRangeQuery {
      *
      * @return 启始时间
      */
-    static Date getStartTimeByStatic() {
-        return DateUtils.getDateByDayNum(new Date(), Calendar.HOUR, -1);
+    static Date defaultGetStartTime() {
+        return getDateByDayNum(new Date(), Calendar.HOUR, -1);
     }
 
     /**
@@ -48,7 +48,7 @@ public interface TaskTimeRangeQuery {
      *
      * @return 结束时间
      */
-    static Date getEndTimeByStatic() {
+    static Date defaultGetEndTime() {
         return new Date();
     }
 
@@ -57,7 +57,7 @@ public interface TaskTimeRangeQuery {
      *
      * @return 未完成的任务数量
      */
-    static Long limitTaskCountByStatic() {
+    static Long defaultLimitTaskCount() {
         return 1000L;
     }
 

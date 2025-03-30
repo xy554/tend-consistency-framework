@@ -1,16 +1,18 @@
 package com.consistency.service;
 
+import cn.hutool.json.JSONUtil;
+import com.consistency.config.TendConsistencyConfiguration;
 import com.consistency.custom.query.TaskTimeRangeQuery;
 import com.consistency.enums.ConsistencyTaskStatusEnum;
+import com.consistency.enums.PerformanceEnum;
+import com.consistency.enums.ThreadWayEnum;
+import com.consistency.exceptions.ConsistencyException;
+import com.consistency.localstorage.RocksLocalStorage;
+import com.consistency.manager.TaskEngineExecutor;
 import com.consistency.mapper.TaskStoreMapper;
 import com.consistency.model.ConsistencyTaskInstance;
 import com.consistency.utils.ReflectTools;
 import com.consistency.utils.SpringUtil;
-import com.consistency.config.TendConsistencyConfiguration;
-import com.consistency.enums.PerformanceEnum;
-import com.consistency.enums.ThreadWayEnum;
-import com.consistency.exceptions.ConsistencyException;
-import com.consistency.manager.TaskEngineExecutor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -49,13 +51,16 @@ public class TaskStoreServiceImpl implements TaskStoreService {
      */
     @Autowired
     private TendConsistencyConfiguration tendConsistencyConfiguration;
-
-
     /**
      * 任务执行器
      */
     @Autowired
     private TaskEngineExecutor taskEngineExecutor;
+    /**
+     * RocksDB工具类
+     */
+    @Autowired
+    private RocksLocalStorage rocksLocalStorage;
 
     /**
      * 初始化最终一致性任务实例到数据库
@@ -64,23 +69,23 @@ public class TaskStoreServiceImpl implements TaskStoreService {
      */
     @Override
     public void initTask(ConsistencyTaskInstance taskInstance) {
-        // 直接基于mybatis的mapper，把我们的任务实例的数据，给持久化到数据库里去
-        Long result = taskStoreMapper.initTask(taskInstance); // 这个是第一个数据库操作的故障点
-        log.info("[一致性任务框架] 初始化任务结果为 [{}]", result > 0);
-
-        // 如果说任务实例数据落库失败了的话，不要直接报错，而是说把这个任务数据写入磁盘文件里去，做一个标记
-        // 就直接返回了就可以了
-        // 可以让框架开一个后台线程，定时去读取这个文件，把一个一个没有落库的任务实例从磁盘文件里读取出来，再次尝试走这段逻辑落库和执行
-
+        Long result = null;
+        // 如果写数据到MySQL失败了，那么可以将数据加入到RocksDB
+        try {
+            result = taskStoreMapper.initTask(taskInstance);
+            log.info("[一致性任务框架] 初始化任务结果为 [{}]", result > 0);
+        } catch (Exception e) {
+            log.error("[一致性任务框架] 初始化任务到数据库时，发生异常，执行降级逻辑，将任务持久化到RocksDB本地存储中, 任务信息为 {}",
+                    JSONUtil.toJsonStr(taskInstance), e);
+            // 将数据存储到RocksDB中
+            rocksLocalStorage.put(taskInstance);
+        }
         // 如果执行模式不是立即执行的任务
         if (!PerformanceEnum.PERFORMANCE_RIGHT_NOW.getCode().equals(taskInstance.getPerformanceWay())) {
             return;
         }
 
         // 判断当前Action是否包含在事务里面，如果是，等事务提交后，再执行Action
-        // 固定写好的一段逻辑，不是个我们来进行配置的
-        // 会用到spring事务API，判断一下，当前Action执行是否包含在事务里，如果是包含在一个事务里的话，不要跟其他的事务混合再一起
-        // 会等到事务提交之后，再执行我们的Action后续的动作
         boolean synchronizationActive = TransactionSynchronizationManager.isSynchronizationActive();
         if (synchronizationActive) {
             TransactionSynchronizationManager.registerSynchronization(
@@ -128,9 +133,9 @@ public class TaskStoreServiceImpl implements TaskStoreService {
                 limitTaskCount = taskTimeRangeQuery.limitTaskCount();
                 return taskStoreMapper.listByUnFinishTask(startTime.getTime(), endTime.getTime(), limitTaskCount);
             } else {
-                startTime = TaskTimeRangeQuery.getStartTimeByStatic();
-                endTime = TaskTimeRangeQuery.getEndTimeByStatic();
-                limitTaskCount = TaskTimeRangeQuery.limitTaskCountByStatic();
+                startTime = TaskTimeRangeQuery.defaultGetStartTime();
+                endTime = TaskTimeRangeQuery.defaultGetEndTime();
+                limitTaskCount = TaskTimeRangeQuery.defaultLimitTaskCount();
             }
         } catch (Exception e) {
             log.error("[一致性任务框架] 调用业务服务实现具体的告警通知类时，发生异常", e);
@@ -165,7 +170,7 @@ public class TaskStoreServiceImpl implements TaskStoreService {
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     @Override
     public int turnOnTask(ConsistencyTaskInstance consistencyTaskInstance) {
-        consistencyTaskInstance.setExecuteTime(System.currentTimeMillis()); // 这个是本次任务实际运行的时间，去做了一个重置
+        consistencyTaskInstance.setExecuteTime(System.currentTimeMillis());
         consistencyTaskInstance.setTaskStatus(ConsistencyTaskStatusEnum.START.getCode());
         return taskStoreMapper.turnOnTask(consistencyTaskInstance);
     }

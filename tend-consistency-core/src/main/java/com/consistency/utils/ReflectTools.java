@@ -97,8 +97,7 @@ public class ReflectTools {
 
         for (int i = paramJsonArray.size() - 1; i >= 0; i--) {
             if (paramJsonArray.getStr(i).startsWith("{")) {
-                // 将数据转换为对应的数据类型，json字符串格式的每一个入参对象（json字符串） + 入参对象的class类型
-                // 转换为一个实例对象
+                // 将数据转换为对应的数据类型
                 args[i] = JSONUtil.toBean(paramJsonArray.getStr(i), parameterTypeClassArray[i]);
             } else {
                 args[i] = paramJsonArray.get(i);

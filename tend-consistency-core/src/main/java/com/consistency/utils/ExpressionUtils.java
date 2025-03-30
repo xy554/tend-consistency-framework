@@ -54,8 +54,7 @@ public class ExpressionUtils {
             for (Map.Entry<String, Object> entry : dataMap.entrySet()) {
                 // key -> ref   value -> iterator.next().getValue()
                 context.setVariable(entry.getKey(), entry.getValue());
-            } // executeTimes <= xx && executeTimes >= xx，跟我们的dataMap里的一些数据参数，executeTimes
-            // 去做一个比较，看看executeTimes是否在我们的表达式的范围内
+            }
             SpelExpressionParser parser = new SpelExpressionParser();
             Expression expression = parser.parseExpression(expr, new TemplateParserContext());
             return expression.getValue(context, String.class);

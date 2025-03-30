@@ -10,8 +10,8 @@ import org.springframework.context.annotation.Configuration;
  * @author xiayang
  */
 @Configuration
-@ComponentScan(value = {"com.consistency"}) // 作用是让spring去扫描框架各个包下的bean
-@MapperScan(basePackages = {"com..consistency.mapper"})
+@ComponentScan(value = {"com.consistency"})
+@MapperScan(basePackages = {"com.consistency.mapper"})
 public class ComponentScanConfig {
 
 

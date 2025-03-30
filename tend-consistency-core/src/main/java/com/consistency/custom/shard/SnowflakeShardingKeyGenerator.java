@@ -135,4 +135,8 @@ public final class SnowflakeShardingKeyGenerator implements ShardingKeyGenerator
         return instance;
     }
 
+    public void setWorkerId(String value) {
+        properties.put("worker.id", value);
+    }
+
 }
