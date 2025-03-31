@@ -1,7 +1,7 @@
 package com.eshop.shard;
 
-import com.google.common.base.Preconditions;
 import com.consistency.custom.shard.ShardingKeyGenerator;
+import com.google.common.base.Preconditions;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.SneakyThrows;

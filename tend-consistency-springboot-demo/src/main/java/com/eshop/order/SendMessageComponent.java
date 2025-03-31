@@ -8,9 +8,11 @@ import com.eshop.fail.SendMessageFallbackHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
  * 发送消息的组件
- * @author xiayang
+ * @author zhonghuashishan
  **/
 @Slf4j
 @Component
@@ -29,19 +31,14 @@ public class SendMessageComponent {
      */
     @ConsistencyTask(
             executeIntervalSec = 20,
-            delayTime = 10, // 这个方法被调用开始，到后续被异步调度执行，至少距离调用时间已经过去了10s
+            delayTime = 10,
             performanceWay = PerformanceEnum.PERFORMANCE_SCHEDULE,
             threadWay = ThreadWayEnum.ASYNC,
             fallbackClass = SendMessageFallbackHandler.class,
             alertActionBeanName = "normalAlerter"
     )
-    // 这个任务如果这么配置的话，我们对他的运行效果期望是什么？
-    // 调用的时候先进AOP切面，肯定会基于方法和注解，封装任务实例，数据会持久化落库
-    // 是否直接来运行我们的这个目标方法，很明显，并不是
-    // 通过调度模式来进行运行，把这个持久化的任务实例从数据库里拿出来
-    // 还必须延迟10s再运行，运行的时候，是异步化来运行的
-    public void send(OrderInfoDTO orderInfo) { // SendMessageComponent.send(OrderInfoDTO)
-        System.out.println(1 / 0); // 模拟失败
+    public void send(OrderInfoDTO orderInfo) {
+//         System.out.println(1 / 0); // 模拟失败
         log.info("[异步调度任务测试] 执行send(OrderInfoDTO)方法 {}", JSONUtil.toJsonStr(orderInfo));
     }
 
@@ -59,19 +56,23 @@ public class SendMessageComponent {
      * @param orderInfo 订单
      */
     @ConsistencyTask(
-            executeIntervalSec = 2,
-            // delayTime = 5,
             performanceWay = PerformanceEnum.PERFORMANCE_RIGHT_NOW,
-            threadWay = ThreadWayEnum.ASYNC,
-            fallbackClass = SendMessageFallbackHandler.class,
-            alertActionBeanName = "normalAlerter" // normalAlerter就是 com..eshop.alertm.NormalAlerter类在spring容器中的beanName
+            threadWay = ThreadWayEnum.SYNC
     )
-    // 立即执行，但是必须要延迟5s钟后再立即执行 -> 单凭你的参数来看，是不对的，延迟5s，但是其实你的设置delayTime是无效的
-    // 执行的时候，还必须是Async异步模式来进行执行
-    // 重试执行的间隔是2s
     public void sendRightNowAsyncMessage(OrderInfoDTO orderInfo) {
         log.info("[异步调度任务测试] 执行sendRightNowAsyncMessage(OrderInfoDTO)方法 {}", JSONUtil.toJsonStr(orderInfo));
         System.out.println(1 / 0); // 模拟失败
+    }
+
+    @ConsistencyTask(performanceWay = PerformanceEnum.PERFORMANCE_RIGHT_NOW)
+    public void sendRightNowAsyncMessage(List<OrderInfoDTO> orderInfos) {
+        log.info("[异步调度任务测试] 执行sendRightNowAsyncMessage1(OrderInfoDTO)方法 {}", JSONUtil.toJsonStr(orderInfos));
+//        System.out.println(1 / 0);
+    }
+
+    @ConsistencyTask(performanceWay = PerformanceEnum.PERFORMANCE_RIGHT_NOW)
+    public void sendRightNowAsyncMessage2() {
+        log.info("[异步调度任务测试] 执行sendRightNowAsyncMessage2(OrderInfoDTO)方法");
     }
 
 }

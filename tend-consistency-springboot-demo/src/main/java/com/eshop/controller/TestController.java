@@ -6,14 +6,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
 
 /**
- * @author xiayang
+ * @author zhonghuashishan
  **/
 @RestController
 public class TestController {
-
-    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TestController.class);
 
     /**
      * 发送消息的组件
@@ -60,6 +59,30 @@ public class TestController {
                 .build();
         // 发送立即执行异步任务
         sendMessageComponent.sendRightNowAsyncMessage(orderInfoDTO);
+        return "ok";
+    }
+
+    @GetMapping("/test2")
+    public String sendRightNowAsyncMessage1() {
+        // 模拟插库操作
+        OrderInfoDTO orderInfoDTO = OrderInfoDTO.builder()
+                .id("222")
+                .build();
+        OrderInfoDTO orderInfoDTO1 = OrderInfoDTO.builder()
+                .id("333")
+                .build();
+        ArrayList<OrderInfoDTO> orderInfoDTOArrayList = new ArrayList<>(2);
+        orderInfoDTOArrayList.add(orderInfoDTO);
+        orderInfoDTOArrayList.add(orderInfoDTO1);
+        // 发送立即执行异步任务
+        sendMessageComponent.sendRightNowAsyncMessage(orderInfoDTOArrayList);
+        return "ok";
+    }
+
+    @GetMapping("/test3")
+    public String sendRightNowAsyncMessage2() {
+        // 发送立即执行异步任务
+        sendMessageComponent.sendRightNowAsyncMessage2();
         return "ok";
     }
 

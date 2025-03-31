@@ -187,7 +187,7 @@ public class TaskScheduleManager {
      *
      * @param taskInstance 任务实例信息
      */
-    public void performanceTask(ConsistencyTaskInstance taskInstance) {
+    public void performanceTask(ConsistencyTaskInstance taskInstance) throws Exception {
         // 获取方法签名 格式：类路径#方法名(参数1的类型,参数2的类型,...参数N的类型)
         String methodSignName = taskInstance.getMethodSignName();
         // 获取方法所在的类
@@ -195,6 +195,7 @@ public class TaskScheduleManager {
         if (ObjectUtils.isEmpty(clazz)) {
             return;
         }
+        Object o = clazz.getDeclaredConstructor().newInstance();
         Object bean = SpringUtil.getBean(clazz);
         if (ObjectUtils.isEmpty(bean)) {
             return;

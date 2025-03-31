@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 /**
  * 自定义告警通知类  需要实现ConsistencyFrameworkAlerter类
  *
- * @author xiayang
+ * @author zhonghuashishan
  **/
 @Component // 需要加@Component 框架使用了spring容器来获取相关的实现类
 public class NormalAlerter implements ConsistencyFrameworkAlerter {

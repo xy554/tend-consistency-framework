@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 /**
  * 自定义降级类
  *
- * @author xiayang
+ * @author zhonghuashishan
  **/
 @Component
 public class SendMessageFallbackHandler {
